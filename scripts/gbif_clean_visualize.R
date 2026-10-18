@@ -13,31 +13,20 @@ library(geodata)
 code <- "LEYE"
 
 # Read in raw GBIF download data from gbif_extraction.R
-gbif_raw <- readRDS(paste0("data/", code, "_occ_raw.rds"))
+gbif_raw <- readRDS(paste0("data/raw/", code, "_occ_raw.rds"))
 
 # PRELIMINARY DATA CLEANING
 
-# Create sf object of saguaro distribution minimum convex polygon (i.e., study area)
-CAGI_polygon <- st_read("data/CAGI_polygon.geojson")
+# Create sf object of AZ boundary for use in ggplots
+az_sf <- st_read("data/raw/az_boundary_raw.geojson")
 
-# Plot study area polygon 
-terra::plot(CAGI_polygon)
+# Create SpatVector object of study area
+az_sv <- vect("data/raw/az_boundary_raw.geojson")
 
-# Create world_map object using geodata
-world_map <- world(resolution = 3,
-                   path = "data/")
+# Plot study area polygon
+terra::plot(az_sv)
 
-# Crop world map to study area
-study_area_sv <- crop(x = world_map,
-                       y = CAGI_polygon)
-
-# Create sf object of the study_area_sv to use in ggplot objects
-study_area_sf <- sf::st_as_sf(study_area_sv)
-
-# Plot cropped study area SpatVector
-terra::plot(study_area_sv)
-
-# Remove data recorded based on fossil or living specimens
+# Check for and remove data recorded based on fossil or living specimens
 clean_step1 <- gbif_raw |>
   as_tibble() |>
   filter(!basisOfRecord %in% c("FOSSIL_SPECIMEN",
@@ -48,7 +37,7 @@ print(paste0(nrow(gbif_raw) - nrow(clean_step1), " records deleted; ",
 # Plot initial raw vs clean_step1 data 
 # Red points have been removed from the data set
 ggplot() +
-  geom_sf(data = study_area_sf) +
+  geom_sf(data = az_sf) +
   geom_point(data = gbif_raw,
              aes(x = decimalLongitude,
                  y = decimalLatitude),
@@ -59,11 +48,11 @@ ggplot() +
              color = "black", size = 2) +
   theme_bw()
 
-# Remove records with problematic occurrence information using using CoordinateCleaner 
+# Check for and remove records with problematic occurrence information using CoordinateCleaner 
 clean_step2 <- clean_step1 |>
   filter(!is.na(decimalLatitude),
          !is.na(decimalLongitude)) |> # remove NA lat/long values
-  #cc_dupl() |> # remove distinct records with identical coordinates 
+  cc_dupl() |> # remove distinct records with identical coordinates 
   cc_zero() |> # remove records with zeros in coordinates
   cc_equ() |> # remove records where the lat/long are equal
   cc_val() |> # remove records outside lat/long coordinate system (i.e., data entry errors)
@@ -76,7 +65,7 @@ print(paste0(nrow(gbif_raw) - nrow(clean_step2), " records deleted; ",
 # Plot initial clean_step1 vs clean_step2 data
 # Red points have been removed from the data set
 ggplot() +
-  geom_sf(data = study_area_sf) +
+  geom_sf(data = az_sf) +
   geom_point(data = clean_step1,
              aes(x = decimalLongitude,
                  y = decimalLatitude),
@@ -87,10 +76,10 @@ ggplot() +
              color = "black", size = 2) +
   theme_bw()
 
-# Remove records with coordinate uncertainty > 250m
+# Remove records with coordinate uncertainty >= 500m
 clean_step3 <- clean_step2 |> 
   filter(is.na(coordinateUncertaintyInMeters) |
-           coordinateUncertaintyInMeters < 250)
+           coordinateUncertaintyInMeters < 500)
 
 print(paste0(nrow(gbif_raw) - nrow(clean_step3), " records deleted; ",
              nrow(clean_step3), " records remaining." ))
@@ -98,7 +87,7 @@ print(paste0(nrow(gbif_raw) - nrow(clean_step3), " records deleted; ",
 # Plot clean_step2 vs clean_step3 data
 # Red points have been removed from the data set
 ggplot() +
-  geom_sf(data = study_area_sf) +
+  geom_sf(data = az_sf) +
   geom_point(data = clean_step2,
              aes(x = decimalLongitude,
                  y = decimalLatitude),
@@ -112,7 +101,7 @@ ggplot() +
 # Plot initial raw data vs clean_step3 data
 # Red points have been removed from the data set
 ggplot() +
-  geom_sf(data = study_area_sf) +
+  geom_sf(data = az_sf) +
   geom_point(data = gbif_raw,
              aes(x = decimalLongitude,
                  y = decimalLatitude),
@@ -129,8 +118,8 @@ gbif_clean <- clean_step3 |>
   clean_names()
 
 # Save cleaned occurrence data as .rds
-saveRDS(gbif_clean, paste0("data/", code, "_occ.rds"))
-write.csv(gbif_clean, paste0("data/", code, "_occ.csv"))
+saveRDS(gbif_clean, paste0("data/final/", code, "_occ.rds"))
+write.csv(gbif_clean, paste0("data/final/", code, "_occ.csv"))
 
 # Histogram of species occurrences plotted by year
 gbif_clean |> 
@@ -140,14 +129,12 @@ gbif_clean |>
              geom="text", aes(label=..count..), vjust=-0.5, hjust = 0.3) +
   theme_bw()
 
-# Plot the map cropped to our study area again
-terra::plot(study_area_sv)
+# Plot the AZ boundary SpatVector object
+terra::plot(az_sv)
 
 # Build a SpatVector and plot species occurrence locations over study area
 occ_map <- vect(gbif_clean, 
                 geom = c("decimal_longitude", "decimal_latitude"),
                 crs = "epsg:4326")
 terra::plot(occ_map, add = TRUE) 
-
-
-
+occ_map
