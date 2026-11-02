@@ -10,18 +10,18 @@ library(janitor)
 library(geodata)
 
 # Define species code
-code <- "LEYE"
+code <- "leye"
 
 # Read in raw GBIF download data from gbif_extraction.R
 gbif_raw <- readRDS(paste0("data/raw/", code, "_occ_raw.rds"))
 
 # PRELIMINARY DATA CLEANING
 
-# Create sf object of AZ boundary for use in ggplots
-az_sf <- st_read("data/raw/az_boundary_raw.geojson")
+# Create sf object of AZ boundary (study area) for use in ggplots
+az_sf <- st_read("data/raw/az_boundary_4326.shp")
 
 # Create SpatVector object of study area
-az_sv <- vect("data/raw/az_boundary_raw.geojson")
+az_sv <- vect("data/raw/az_boundary_4326.shp")
 
 # Plot study area polygon
 terra::plot(az_sv)

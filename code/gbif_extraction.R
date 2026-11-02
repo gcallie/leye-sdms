@@ -15,7 +15,7 @@ taxa
 taxa$usageKey
 
 # Build four-letter species code
-code <- toupper(paste0(substr(taxa$genericName, 1, 2), substr(taxa$specificEpithet, 1, 2)))
+code <- tolower(paste0(substr(taxa$genericName, 1, 2), substr(taxa$specificEpithet, 1, 2)))
 
 # Set parameters and initiate download
 # Set to LEYE occurrences in Arizona, 1991-2020
