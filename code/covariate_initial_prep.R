@@ -122,9 +122,9 @@ karst_rast <- rasterize(karst_crop, karst_grid,
                         cover = TRUE)
 karst_rast # Preview object
 plot(karst_rast) # Plot raster
-karst_rast[karst_rast == 0] <- NA # Reclassify karst raster so 0s are NAs
-summary(karst_rast)
-plot(karst_rast, colNA = "gray") # Replot raster 
+karst_rast <- subst(karst_rast, NA, 0) # Replace NA values with 0s
+karst_rast # Preview object again
+plot(karst_rast) # Replot
 karst_rast <- crop(karst_rast, study_extent) # Crop to AZ boundary
 names(karst_rast) <- "karst_density" # Rename raster layer with covariate names
 writeRaster(karst_rast, "data/processed/karst_density_az.tif", overwrite = TRUE) # Save output
