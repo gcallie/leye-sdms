@@ -53,7 +53,10 @@ all_paths <- c("data/processed/elev_az.tif",
                "data/processed/karst_dist_az.tif", 
                "data/processed/bioclim_az.tif")
 all_covs <- rast(all_paths)
-all_covs
+
+# Standardize naming conventions
+all_covs <- all_covs |> 
+  rename(tri = TRI, tpi = TPI, dd0 = DD_0, eref = Eref, mcmt = MCMT, mwmt = MWMT, pptat = PPT_at, pptsp = PPT_sp, pptsm = PPT_sm, pptwt = PPT_wt, tavesm = Tave_sm, tavewt = Tave_wt, tavesp = Tave_sp, taveat = Tave_at, karstdist = karst_dist_m, karstdens = karst_density)
 plot(all_covs)
 
 # LEYE occurrence data
@@ -107,7 +110,7 @@ head(covs_leye) # Preview object
 # Check collinearity across AZ using LEYE used/available points
 
 # VIF: keep covariates with VIF ~ 5 or less
-vif_test <- vifstep(covs_leye, th = 5, keep = c("PPT_wt", "PPT_sm", "DD_0"))
+vif_test <- vifstep(covs_leye, th = 5, keep = c("pptwt", "pptsm", "dd0"))
 vif_test
 covs_list <- vif_test@results$Variables # Preview object
 covs_list
@@ -119,7 +122,7 @@ all_cor <- cor(covs_leye) # Create correlation matrix
 all_cor_df <- as.data.frame(all_cor) # Create data frame object of correlation values
 all_cor_df <- all_cor_df |> 
   rownames_to_column("cov1") |> 
-  pivot_longer(DD_0:Tave_wt, # Update this based on covariates included
+  pivot_longer(dd0:tavewt, # Update this based on covariates included
                names_to = "cov2",
                values_to = "cor") |> 
   filter(cov1 != cov2) |> 
@@ -136,26 +139,26 @@ all_cor_df <- all_cor_df |>
   select(cov1, cov2, cor)
 all_cor_df # Preview object
 
-# Compare binomial GLMs with MWMT vs DD_0 vs Eref
+# Compare binomial GLMs with mwmt vs dd0 vs eref // compare slope vs tri
 
 ## Add covariate point values to data frame with LEYE lat/long, presence/absence
 leye_data <- bind_cols(covs_leye, leye_pts)
 head(leye_data) # Preview object
 
 ## Model with MWMT
-mwmt_mod <- glm(pa ~ slope + aspect + TPI + PPT_sm + PPT_wt + karst_dist_m + karst_density + MWMT, data = leye_data,
+mwmt_mod <- glm(pa ~ slope + aspect + tpi + pptsm + pptwt + karstdist + karstdens + mwmt, data = leye_data,
                 weight = weight,
                 family = "binomial")
 summary(mwmt_mod)
 
 ## Model with DD_0
-dd0_mod <- glm(pa ~ slope + aspect + TRI + TPI + PPT_sm + PPT_wt + karst_dist_m + karst_density + DD_0, data = leye_data,
+dd0_mod <- glm(pa ~ slope + aspect + tpi + pptsm + pptwt + karstdist + karstdens + dd0, data = leye_data,
                 weight = weight,
                 family = "binomial")
 summary(dd0_mod)
 
 ## Model with Eref
-eref_mod <- glm(pa ~ slope + aspect + TRI + TPI + PPT_sm + PPT_wt + karst_dist_m + karst_density + Eref, data = leye_data,
+eref_mod <- glm(pa ~ slope + aspect + tpi + pptsm + pptwt + karstdist + karstdens + eref, data = leye_data,
                weight = weight,
                family = "binomial")
 summary(eref_mod)
@@ -171,11 +174,34 @@ aic # Preview object
 
 ### DD_0 is strongest predictor
 
-# Covariate list for forage species SDMs: slope, aspect, TPI, TRI, DD_0, PPT_sm, PPT_wt
-covs_keep_forage <- c("slope", "aspect", "TPI", "TRI", "DD_0", "PPT_sm", "PPT_wt")
+## Model with slope
+slope_mod <- glm(pa ~ slope + aspect + tpi + pptsm + pptwt + karstdist + karstdens + dd0, data = leye_data,
+               weight = weight,
+               family = "binomial")
+summary(slope_mod)
 
-# Covariate list for LEYE SDMs (pre-pseudooptimization, not including forage SDM rasters): slope, aspect, TPI, DD_0, PPT_sm, PPT_wt, karst_dist_m, karst_density
-covs_keep_leye <- c("slope", "aspect", "TPI", "TRI", "DD_0", "PPT_sm", "PPT_wt", "karst_dist_m", "karst_density")
+## Model with tri
+tri_mod <- glm(pa ~ tri + aspect + tpi + pptsm + pptwt + karstdist + karstdens + dd0, data = leye_data,
+                weight = weight,
+                family = "binomial")
+summary(tri_mod)
+
+## Compare model AIC
+aic <- data.frame(
+  mod = c("slope_mod", "tri_mod"),
+  AIC = c(AIC(slope_mod), AIC(tri_mod)))
+aic <-  aic |> 
+  arrange(AIC) |>  
+  mutate(dAIC = AIC - min(AIC)) # Calculate delta AIC
+aic # Preview object
+
+# Slope is barely better
+
+# Covariate list for forage species SDMs: slope, aspect, tpi, tri, dd0, pptsm, pptwt
+covs_keep_forage <- c("slope", "aspect", "tpi", "dd0", "pptsm", "pptwt")
+
+# Covariate list for LEYE SDMs (pre-pseudooptimization, not including forage SDM rasters): slope, aspect, tpi, tri, dd0, pptsm, pptwt, karstdist, karstdens
+covs_keep_leye <- c("slope", "aspect", "tpi", "dd0", "pptsm", "pptwt", "karstdist", "karstdens")
 
 covs <- subset(all_covs, covs_keep_leye) # Keep subset of covs for leye
 names(covs) # Check that correct layers included
@@ -346,3 +372,128 @@ head(agave_data) # Preview object
 write_csv(cagi_data, "data/processed/cagi_data.csv")
 write_csv(stth_data, "data/processed/stth_data.csv")
 write_csv(agave_data, "data/processed/agave_data.csv")
+
+
+## PSEUDOOPTIMIZATION ##
+
+# Pull out values for points from rasters for only non-collinear covariates
+covs_leye <- extract(x = covs,
+                     y = leye_pts[, c("longitude", "latitude")],
+                     ID = FALSE)
+head(covs_leye) # Preview object
+
+# Bind extracted covariate values to leye lat/long, presence/absence
+leye_data <- bind_cols(covs_leye, leye_pts)
+head(leye_data)
+
+# Create SpatVector object of leye used/available points
+leye_pts_sv <- vect(leye_data,
+      geom = c("longitude", "latitude"),
+      crs = crs(bioclim_covs))
+
+# Create copy of leye_data data frame for storing new values extracted at buffers
+leye_pseudo <- leye_data
+
+# Create vector object of buffer radii (2.5km, 5km, 10km, 25km)
+buffers <- c(2500, 5000, 10000, 25000) 
+
+# Extract mean values for each covariate at different scales of effect and store in leye_pseudo object 
+
+for(i in 1:length(buffers)){
+  
+  buffer_i <- buffers[i]
+  
+  cat("Running buffer size =", buffer_i,"\n")
+  
+  pt_buffers <- buffer(leye_pts_sv,
+                           width = buffer_i)
+  
+# Extract values for all covariates
+cov_buffer_i <- extract(covs,
+                          pt_buffers,
+                          fun = "mean")
+  
+# Add buffer size to column names
+names(cov_buffer_i) <- paste0(names(cov_buffer_i), "_", buffer_i)
+
+# Add the columns from cov_buffer_i to leye_pseudo
+leye_pseudo <- cbind(leye_pseudo, cov_buffer_i) 
+
+}
+
+# Remove ID columns
+leye_pseudo <- leye_pseudo |> 
+  select(-c(ID_2500, ID_5000, ID_10000, ID_25000)) |> 
+  rename(slope_pt = slope, aspect_pt = aspect, tpi_pt = tpi, dd0_pt = dd0, pptsm_pt = pptsm, pptwt_pt = pptwt, karstdist_pt = karstdist, karstdens_pt = karstdens)
+
+summary(leye_pseudo) # View summary
+
+# Compare and select scales of effect
+
+## Prepare input variables
+buffers <- c("pt", 2500, 5000, 10000, 25000) # Add point scale to list of buffers
+buffers # Preview object
+
+## Prepare storage data frame
+col_names <- c("Covariate","Scale","AIC","Delta_AIC","AICw") # Create list of columns
+scales <- as.data.frame(matrix(NA, nrow = length(covs_keep_leye)*length(buffers),
+                               ncol = length(col_names)))
+colnames(scales) <- col_names # Rename columns
+i.row <- 1
+
+##  Generate models and AIC values 
+for(i in 1:length(covs_keep_leye)){
+  cov_i <- covs_keep_leye[i]
+  cat("Starting", cov_i, "\n")
+  data_i <- leye_pseudo[, c("pa", "weight", paste0(cov_i,"_", buffers))]
+  cov_cols <- paste0(cov_i, "_", buffers)
+  
+  for(j in cov_cols){
+    tmp_col <- j
+    tmp_data <- data_i[,c("pa", "weight", tmp_col)]
+    tmp_model <- glm(tmp_data[, 1] ~ tmp_data[, 3], weights = tmp_data[, 2], family = binomial)
+    scales$Covariate[i.row] <- cov_i
+    scales$AIC[i.row] <- AIC(tmp_model)
+    scales$Scale[i.row] <- strsplit(j, "_")[[1]][2]
+    cat("Finished scale", strsplit(j, "_")[[1]][2], "\n")
+    i.row <- i.row + 1
+  }
+  min_i <- min(scales$AIC[which(scales$Covariate == cov_i)])
+  delta_i <- scales$AIC[which(scales$Covariate == cov_i)] - min_i
+  w_i <- Weights(scales$AIC[which(scales$Covariate == cov_i)])
+  scales$AICw[which(scales$Covariate == cov_i)] <- w_i
+  scales$Delta_AIC[which(scales$Covariate == cov_i)] <- delta_i
+  
+}
+
+# Remove distance to karst covariate since it does not need to be pseudooptimized
+scales <- scales |> 
+  filter(!str_detect(Covariate, "karstdist"))
+
+
+scale_plot <- ggplot(data = scales,
+                     aes(x = Scale, y = Delta_AIC)) +
+  geom_hline(yintercept = 0) +
+  geom_line(aes(group = ''), color = "black") +
+  geom_point(color = "black")+
+  facet_wrap(~ Covariate)+
+  theme_bw()
+scale_plot
+
+# Pull out scale of effect for each covariate
+scale_of_effect <- scales |> 
+  group_by(Covariate) |> 
+  slice_min(Delta_AIC)
+scale_of_effect # Preview object
+
+# aspect: pt
+# dd0: 25000
+# karstdens: pt
+# pptsm: 5000
+# pptwt: 5000
+# slope: 5000
+# tpi: pt 
+
+
+
+
