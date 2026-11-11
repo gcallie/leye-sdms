@@ -1,132 +1,172 @@
-# Check collinearity of raster layers, select candidate model covariates, determine appropriate scale of effect for leye SDMs
+# Prepare used/available points, test environmental raster collinearity, and pseudooptimize covariates for lesser long-nosed bat SDMs
+
+# Install spThin from CRAN read-only GitHub mirror
+# remotes::install_github("cran/package_name")
 
 # Load packages
+library(tidyterra)
 library(tidyverse)
 library(terra)
 library(usdm)
-library(car)
-#library(corrplot)
+library(MuMIn)
+library(spThin)
 
-# Read in reprojected, cropped data
+# Define species
+# sp <- "leye"
+sp <- c("cagi", "stth", "agave")
+
+# Read in data
+
+## Polygons
 az <- vect("data/processed/az_boundary.shp")
-elev <- rast("data/processed/elev_az.tif")
-slope <- rast("data/processed/slope_az.tif")
-aspect <- rast("data/processed/aspect_az.tif")
-tri <- rast("data/processed/tri_az.tif")
-tpi <- rast("data/processed/tpi_az.tif")
-karst_density <- rast("data/processed/karst_density_az.tif")
-karst_presence <- rast("data/processed/karst_presence_az.tif")
-karst_dist <- rast("data/processed/karst_dist_az.tif")
-bioclim_covs <- rast("data/processed/bioclim_az.tif")
-leye <- read_csv("data/processed/leye_occ.csv")
-leye_used <- project(vect(leye,
-                 geom = c("longitude", "latitude"),
-                 crs = "epsg:4326"), crs(crs(bioclim_covs))) # Read in leye occurrence points and reproject to Lambert Equal Area
+mcp <- vect("data/processed/mcp.shp")
+mcp_buffered <- vect("data/processed/mcp_buffered.shp")
 
-# Generate available points using 50x multiplier
-system.time(leye_avail <- spatSample(az, 
-                         size = nrow(leye) * 50,
-                         method = "random"))
+for(species in sp){
+  
+  ## Species occurrence points
+  sp_raw <- read_csv(paste0("data/processed/", sp, "_occ.csv")) # species occurrence points
+  
+  ## Create multi-layer SpatRaster of environmental covariate data
+  envs_paths_all <- c("data/processed/elev_mcp_buffered.tif",
+                      "data/processed/slope_mcp_buffered.tif",
+                      "data/processed/aspect_mcp_buffered.tif",
+                      "data/processed/tri_mcp_buffered.tif",
+                      "data/processed/tpi_mcp_buffered.tif",
+                      "data/processed/karst_density_mcp_buffered.tif",
+                      "data/processed/karst_dist_mcp_buffered.tif", 
+                      "data/processed/bioclim_mcp_buffered.tif")
+  
+  envs_all <- rast(envs_paths_all) # Create SpatRaster object
+  names(envs_all) # Check covariate list
+  proj <- crs(envs_all) # Store CRS/projection
+  proj # Preview object
+  
+  ## Plot and check to make sure raster extents look correct
+  plot(envs_all)
+  plot(envs_all[[1]])
+  plot(mcp, add = TRUE)
+  plot(mcp_buffered, add = TRUE)
+  
+  # Prepare data
+  
+  ## Standardize naming conventions to all lowercase, no underscores
+  envs_all <- envs_all |> 
+    rename(tri = TRI, tpi = TPI, dd0 = DD_0, eref = Eref, mcmt = MCMT, mwmt = MWMT, pptat = PPT_at, pptsp = PPT_sp, pptsm = PPT_sm, pptwt = PPT_wt, tavesm = Tave_sm, tavewt = Tave_wt, tavesp = Tave_sp, taveat = Tave_at, karstdist = karst_dist_m, karstdens = karst_density)
+  plot(envs_all) # Preview object
+  
+  ## Create a SpatRaster of covariates masked to study area MCP
+  envs_mcp <- crop(envs_all, mcp, mask = TRUE)
+  plot(envs_mcp[[1]])
+  envs_mcp_buffered <- crop(envs_all, mcp_buffered, mask = TRUE)
+  plot(envs_mcp_buffered[[1]])
+  plot(mcp, add = TRUE)
+  
+  ## Create SpatVector object and reproject occurrence points
+  sp_used_sv <-  project(vect(sp_raw,
+                              geom = c("longitude", "latitude"),
+                              crs = "epsg:4326"), proj) 
+  sp_used_sv <- crop(sp_used_sv, mcp)
+  plot(envs_all[[1]]) # Plot one environmental raster
+  plot(mcp, add = TRUE) # Overlay study area polygon
+  plot(sp_used_sv, add = TRUE, pch = 1, cex = 0.75, col = "black") # Plot used points
+  
+  ## Convert points to data frame objects
+  sp_used <- crds(sp_used_sv)
+  sp_used <- as.data.frame(sp_used)
+  sp_used <- sp_used |> 
+    mutate(species = species) # Create species column for use in thin()  
+  head(sp_used) # Preview object
+  
+  ## Thin used points to 1 occurrence per 1km grid  cell
+  sp_used_thin <- spThin::thin(sp_used,
+                               lat.col = "y",
+                               long.col = "x",
+                               spec.col = "species",
+                               thin.par = 1, 
+                               reps = 1,
+                               locs.thinned.list.return = TRUE, 
+                               write.files = FALSE, 
+                               write.log.file = FALSE) |> 
+    as.data.frame() |> 
+    rename("longitude" = "Longitude", "latitude" = "Latitude") |> 
+    mutate(pa = 1) |>  # Populate presence/absence column 
+    mutate(weight = 1) 
+  
+  ## Create SpatVector of thinned used points
+  sp_used_thin_sv <- vect(sp_used_thin,
+                          geom = c("longitude", "latitude"),
+                          crs = proj)
+  
+  ## Create conditional multiplier object
+  multiplier <- case_when(nrow(sp_used_thin) < 100 ~ 100,
+                          nrow(sp_used_thin) >= 100 & nrow(sp_used_thin) < 20000 ~ 50,
+                          .default = 25)
+  
+  ## Set seed for random number generator
+  set.seed(1404)
+  
+  ## Generate available (i.e., background) points
+  system.time(sp_avail_sv <- spatSample(mcp, 
+                                        size = nrow(sp_used_thin) * multiplier,
+                                        method = "random"))
+  
+  plot(envs_all[[1]]) # Plot one environmental raster
+  plot(mcp, add = TRUE) # Overlay study area polygon
+  plot(sp_avail_sv, add = TRUE, pch = 1, cex = 0.75, col = "white") # Add available points
+  plot(sp_used_sv, add = TRUE, cex = 0.75, col = "red") # Add thinned used points
+  
+  sp_avail <- crds(sp_avail_sv)
+  sp_avail <- as.data.frame(sp_avail)
+  sp_avail <- sp_avail |> 
+    rename("longitude" = "x", "latitude" = "y") |> 
+    mutate(pa = 0) |> 
+    mutate(weight = 1) # weight used points as 1 
+  head(sp_avail) # Preview object
+  
+  ## Join used and available points into a single data frame
+  sp_pts <- rbind(sp_used_thin, sp_avail)
+  head(sp_pts) # Preview object
+  table(sp_pts$pa) # Compare used/available point counts
+  
+  ## Extract covariate values at used available point locations
+  covs_pts <- terra::extract(x = envs_all,
+                             y = sp_pts[, c("longitude", "latitude")],
+                             ID = FALSE)
+  head(covs_pts) # Preview object
+  
+  ## Save output
+  write_csv(sp_used_thin, paste0("data/processed/", species, "_used_thin.csv")) 
+  write_csv(sp_avail, paste0("data/processed/", species, "_avail.csv")) 
+  write_csv(sp_pts, paste0("data/processed/", species, "_pts.csv")) 
+  write_csv(covs_pts, paste0("data/processed/", species, "_covs_pts.csv")) 
+}
 
-# Preview objects
-# AZ Polygon
-az
+# TEST COLLINEARITY #
 
-# Covariate rasters
-elev
-slope
-aspect
-tri
-tpi
-karst_density
-karst_dist
-karst_presence
-bioclim_covs
+## VIF (across MCP, threshold = 5, force retention of mean summer and winter precipitation)
+vif_test <- vifstep(envs_mcp, th = 5, keep = c("pptsm", "pptwt"))
+envs <- usdm::exclude(envs_mcp_buffered, vif_test) # Get subset of non-collinear covariates for buffered study area rasters
+plot(envs) # Preview object
+envs_subset <- names(envs) # Check covariate list
+envs_subset
 
-# Create multi-layer raster for all covariates
-all_paths <- c("data/processed/elev_az.tif",
-               "data/processed/slope_az.tif",
-               "data/processed/aspect_az.tif",
-               "data/processed/tri_az.tif",
-               "data/processed/tpi_az.tif",
-               "data/processed/karst_density_az.tif",
-               "data/processed/karst_dist_az.tif", 
-               "data/processed/bioclim_az.tif")
-all_covs <- rast(all_paths)
+## Pairwise (Pearson's correlation)
+cor <- layerCor(envs_all, fun = "cor") |> 
+  as.data.frame() |>  # Create correlation matrix
+  select(starts_with("correlation.")) |>  # Clean up columns
+  rename_with(~ str_remove(., "^correlation\\."))
+head(cor)
 
-# Standardize naming conventions
-all_covs <- all_covs |> 
-  rename(tri = TRI, tpi = TPI, dd0 = DD_0, eref = Eref, mcmt = MCMT, mwmt = MWMT, pptat = PPT_at, pptsp = PPT_sp, pptsm = PPT_sm, pptwt = PPT_wt, tavesm = Tave_sm, tavewt = Tave_wt, tavesp = Tave_sp, taveat = Tave_at, karstdist = karst_dist_m, karstdens = karst_density)
-plot(all_covs)
-
-# LEYE occurrence data
-leye_used
-leye_avail
-
-# Test by plotting one raster with AZ boundary and occurrence points overlaid 
-plot(elev) # Plot test raster
-plot(az, add = TRUE) # Plot AZ boundary
-points(leye_avail, # Plot available points
-       col ="white", 
-       pch = 1,
-       cex = 0.75)
-points(leye_used, # Plot used points
-       col = "red")
-
-# Create data frame of available point coordinates
-leye_avail <- crds(leye_avail)
-leye_avail <- as.data.frame(leye_avail)
-leye_avail <- leye_avail |> 
-  rename("longitude" = "x", "latitude" = "y") |> 
-  mutate(pa = 0) |> 
-  mutate(weight = 5000) # weight available points as 5000
-head(leye_avail) # Preview object
-
-# Create data frame of used point coordinates
-leye_used <- crds(leye_used)
-leye_used <- as.data.frame(leye_used)
-leye_used <-  leye_used |> 
-  rename("longitude" = "x", "latitude" = "y") |> 
-  mutate(pa = 1) |> 
-  mutate(weight = 1) # weight used points as 1 
-head(leye_used) # Preview object
-
-# Join used and available points into a single data frame
-leye_pts <- rbind(leye_used, leye_avail)
-head(leye_pts) # Preview object
-table(leye_pts$pa) # Check that number of used and available points looks correct
-
-# Pull out values for points from rasters
-
-## All covariates
-covs_leye <- extract(x = all_covs, 
-                      y = leye_pts[, c("longitude", "latitude")],
-                      ID = FALSE)
-head(covs_leye) # Preview object
-
-
-# CHECK RASTER COLLINEARITY #
-
-# Check collinearity across AZ using LEYE used/available points
-
-# VIF: keep covariates with VIF ~ 5 or less
-vif_test <- vifstep(covs_leye, th = 5, keep = c("pptwt", "pptsm", "dd0"))
-vif_test
-covs_list <- vif_test@results$Variables # Preview object
-covs_list
-
-# Pairwise (Pearson's correlation)
-all_cor <- cor(covs_leye) # Create correlation matrix
-
-## Summarize highly correlated (cor > 0.7) covariates in a table
-all_cor_df <- as.data.frame(all_cor) # Create data frame object of correlation values
-all_cor_df <- all_cor_df |> 
+# Summarize highly correlated (cor > 0.7) covariates 
+cor_df <- cor |> 
   rownames_to_column("cov1") |> 
-  pivot_longer(dd0:tavewt, # Update this based on covariates included
+  pivot_longer(elevation:tavewt, # Update this based on covariates included
                names_to = "cov2",
                values_to = "cor") |> 
   filter(cov1 != cov2) |> 
-  filter(abs(cor) >= 0.7) |> 
+  mutate(cor = abs(cor)) |> 
+  filter(cor >= 0.7) |> 
   mutate(cov_order = paste(cov1, cov2) |> # Start workflow to remove duplicates
            strsplit(split = ' ') |> 
            map_chr( ~ sort(.x) |>  
@@ -136,268 +176,41 @@ all_cor_df <- all_cor_df |>
   mutate(num = row_number()) |> 
   filter(num != 2) |> 
   ungroup() |> 
-  select(cov1, cov2, cor)
-all_cor_df # Preview object
+  select(cov1, cov2, cor) |> 
+  arrange(desc(cor))
+cor_df # Preview object
 
-# Compare binomial GLMs with mwmt vs dd0 vs eref // compare slope vs tri
+# Save raster stack of forage (cagi, stth, agave) covariates
+# Noncollinear minus karstdist and karstdens
+envs_forage <- envs |> 
+  select(-karstdist, -karstdens)
+names(envs_forage)
+writeRaster(envs_forage, "envs_forage.tif", overwrite = TRUE)
 
-## Add covariate point values to data frame with LEYE lat/long, presence/absence
-leye_data <- bind_cols(covs_leye, leye_pts)
-head(leye_data) # Preview object
+# PSEUDOOPTIMIZE COVARIATES # 
+# Only for lesser long-nosed bats (i.e., leye)
 
-## Model with MWMT
-mwmt_mod <- glm(pa ~ slope + aspect + tpi + pptsm + pptwt + karstdist + karstdens + mwmt, data = leye_data,
-                weight = weight,
-                family = "binomial")
-summary(mwmt_mod)
+# Extract covariate values at different scales of effect
 
-## Model with DD_0
-dd0_mod <- glm(pa ~ slope + aspect + tpi + pptsm + pptwt + karstdist + karstdens + dd0, data = leye_data,
-                weight = weight,
-                family = "binomial")
-summary(dd0_mod)
+## Bind extracted covariate values to lat/long, presence/absence, weight and keep only noncollinear covariates
+sp_data <- bind_cols(covs_pts, sp_pts) |> 
+  select(any_of(c(envs_subset, "pa", "weight")))
+head(sp_data)
 
-## Model with Eref
-eref_mod <- glm(pa ~ slope + aspect + tpi + pptsm + pptwt + karstdist + karstdens + eref, data = leye_data,
-               weight = weight,
-               family = "binomial")
-summary(eref_mod)
+## Create SpatVector object of used/available points
+sp_pts_sv <- vect(sp_pts,
+                  geom = c("longitude", "latitude"),
+                  crs = proj)
+sp_pts_sv # Preview object
 
-## Compare model AIC
-aic <- data.frame(
-  mod = c("mwmt_mod", "dd0_mod", "eref_mod"),
-  AIC = c(AIC(mwmt_mod), AIC(dd0_mod), AIC(eref_mod)))
-aic <-  aic |> 
-  arrange(AIC) |>  
-  mutate(dAIC = AIC - min(AIC)) # Calculate delta AIC
-aic # Preview object
+## Create copy of sp_data data frame for storing new values extracted at buffers
+sp_pseudo <- sp_data
+head(sp_pseudo)
 
-### DD_0 is strongest predictor
+## Create vector object of buffer radii (2.5km, 5km, 10km, 25km, 50km)
+buffers <- c(2500, 5000, 10000, 25000, 50000) 
 
-## Model with slope
-slope_mod <- glm(pa ~ slope + aspect + tpi + pptsm + pptwt + karstdist + karstdens + dd0, data = leye_data,
-               weight = weight,
-               family = "binomial")
-summary(slope_mod)
-
-## Model with tri
-tri_mod <- glm(pa ~ tri + aspect + tpi + pptsm + pptwt + karstdist + karstdens + dd0, data = leye_data,
-                weight = weight,
-                family = "binomial")
-summary(tri_mod)
-
-## Compare model AIC
-aic <- data.frame(
-  mod = c("slope_mod", "tri_mod"),
-  AIC = c(AIC(slope_mod), AIC(tri_mod)))
-aic <-  aic |> 
-  arrange(AIC) |>  
-  mutate(dAIC = AIC - min(AIC)) # Calculate delta AIC
-aic # Preview object
-
-# Slope is barely better
-
-# Covariate list for forage species SDMs: slope, aspect, tpi, tri, dd0, pptsm, pptwt
-covs_keep_forage <- c("slope", "aspect", "tpi", "dd0", "pptsm", "pptwt")
-
-# Covariate list for LEYE SDMs (pre-pseudooptimization, not including forage SDM rasters): slope, aspect, tpi, tri, dd0, pptsm, pptwt, karstdist, karstdens
-covs_keep_leye <- c("slope", "aspect", "tpi", "dd0", "pptsm", "pptwt", "karstdist", "karstdens")
-
-covs <- subset(all_covs, covs_keep_leye) # Keep subset of covs for leye
-names(covs) # Check that correct layers included
-covs_forage <- subset(all_covs, covs_keep_forage)  # Keep subset of covs for forage species
-names(covs_forage) # Check that correct layers included
-
-## PREP DATA FOR FORAGE SPECIES SDMs ##
-
-# Saguaros
-cagi <- read_csv("data/processed/cagi_occ.csv")
-cagi_used <- project(vect(cagi,
-                          geom = c("longitude", "latitude"),
-                          crs = "epsg:4326"), crs(crs(bioclim_covs))) # Read in cagi occurrence points and reproject to Lambert Equal Area
-
-# Generate available points using 1x multiplier
-system.time(cagi_avail <- spatSample(az, 
-                         size = nrow(cagi),
-                         method = "random"))
-
-# Create data frame of available point coordinates
-cagi_avail <- crds(cagi_avail)
-cagi_avail <- as.data.frame(cagi_avail)
-cagi_avail <- cagi_avail |> 
-  rename("longitude" = "x", "latitude" = "y") |> 
-  mutate(pa = 0) |> 
-  mutate(weight = 5000) # weight available points as 5000
-head(cagi_avail) # Preview object
-
-# Create data frame of used point coordinates
-cagi_used <- crds(cagi_used)
-cagi_used <- as.data.frame(cagi_used)
-cagi_used <-  cagi_used |> 
-  rename("longitude" = "x", "latitude" = "y") |> 
-  mutate(pa = 1) |> 
-  mutate(weight = 1) # weight used points as 1 
-head(cagi_used) # Preview object
-
-# Join used and available points into a single data frame
-cagi_pts <- rbind(cagi_used, cagi_avail)
-head(cagi_pts) # Preview object
-table(cagi_pts$pa) # Check that number of used and available points looks correct
-
-# Pull out values for points from rasters
-covs_cagi <- extract(x = covs_forage,
-                     y = cagi_pts[, c("longitude", "latitude")],
-                     ID = FALSE)
-head(covs_cagi) # Preview object
-
-# Test by plotting one raster with AZ boundary and occurrence points overlaid
-plot(elev) # Plot test raster
-plot(az, add = TRUE) # Plot AZ boundary
-points(cagi_avail, # Plot available points
-       col ="white",
-       pch = 1,
-       cex = 0.75)
-points(cagi_used, # Plot used points
-       col = "red")
-
-# Organ Pipes
-stth <- read_csv("data/processed/stth_occ.csv")
-stth_used <- project(vect(stth,
-                          geom = c("longitude", "latitude"),
-                          crs = "epsg:4326"), crs(crs(bioclim_covs))) # Read in stth occurrence points and reproject to Lambert Equal Area
-
-# Generate available points using 25x multiplier
-system.time(stth_avail <- spatSample(az, 
-                                     size = nrow(stth) * 25,
-                                     method = "random"))
-
-# Create data frame of available point coordinates
-stth_avail <- crds(stth_avail)
-stth_avail <- as.data.frame(stth_avail)
-stth_avail <- stth_avail |> 
-  rename("longitude" = "x", "latitude" = "y") |> 
-  mutate(pa = 0) |> 
-  mutate(weight = 5000) # weight available points as 5000
-head(stth_avail) # Preview object
-
-# Create data frame of used point coordinates
-stth_used <- crds(stth_used)
-stth_used <- as.data.frame(stth_used)
-stth_used <-  stth_used |> 
-  rename("longitude" = "x", "latitude" = "y") |> 
-  mutate(pa = 1) |> 
-  mutate(weight = 1) # weight used points as 1 
-head(stth_used) # Preview object
-
-# Join used and available points into a single data frame
-stth_pts <- rbind(stth_used, stth_avail)
-head(stth_pts) # Preview object
-table(stth_pts$pa) # Check that number of used and available points looks correct
-
-# Pull out values for points from rasters
-covs_stth <- extract(x = covs_forage,
-                     y = stth_pts[, c("longitude", "latitude")],
-                     ID = FALSE)
-head(covs_stth) # Preview object
-
-# Test by plotting one raster with AZ boundary and occurrence points overlaid
-plot(elev) # Plot test raster
-plot(az, add = TRUE) # Plot AZ boundary
-points(stth_avail, # Plot available points
-       col ="white",
-       pch = 1,
-       cex = 0.75)
-points(stth_used, # Plot used points
-       col = "red")
-
-# Agaves
-agave <- read_csv("data/processed/agave_occ.csv")
-agave_used <- project(vect(agave,
-                          geom = c("longitude", "latitude"),
-                          crs = "epsg:4326"), crs(crs(bioclim_covs))) # Read in agave occurrence points and reproject to Lambert Equal Area
-
-# Generate available points using 10x multiplier
-system.time(agave_avail <- spatSample(az, 
-                                     size = nrow(agave) * 10,
-                                     method = "random"))
-
-# Create data frame of available point coordinates
-agave_avail <- crds(agave_avail)
-agave_avail <- as.data.frame(agave_avail)
-agave_avail <- agave_avail |> 
-  rename("longitude" = "x", "latitude" = "y") |> 
-  mutate(pa = 0) |> 
-  mutate(weight = 5000) # weight available points as 5000
-head(agave_avail) # Preview object
-
-# Create data frame of used point coordinates
-agave_used <- crds(agave_used)
-agave_used <- as.data.frame(agave_used)
-agave_used <-  agave_used |> 
-  rename("longitude" = "x", "latitude" = "y") |> 
-  mutate(pa = 1) |> 
-  mutate(weight = 1) # weight used points as 1 
-head(agave_used) # Preview object
-
-# Join used and available points into a single data frame
-agave_pts <- rbind(agave_used, agave_avail)
-head(agave_pts) # Preview object
-table(agave_pts$pa) # Check that number of used and available points looks correct
-
-# Pull out values for points from rasters
-covs_agave <- extract(x = covs_forage,
-                     y = agave_pts[, c("longitude", "latitude")],
-                     ID = FALSE)
-head(covs_agave) # Preview object
-
-# Test by plotting one raster with AZ boundary and occurrence points overlaid
-plot(elev) # Plot test raster
-plot(az, add = TRUE) # Plot AZ boundary
-points(agave_avail, # Plot available points
-       col ="white",
-       pch = 1,
-       cex = 0.75)
-points(agave_used, # Plot used points
-       col = "red")
-
-# Bind lat/long and presence/absence to the extracted covariate values for forage species
-cagi_data <- bind_cols(covs_cagi, cagi_pts)
-head(cagi_data) # Preview object
-stth_data <- bind_cols(covs_stth, stth_pts)
-head(stth_data) # Preview object
-agave_data <- bind_cols(covs_agave, agave_pts)
-head(agave_data) # Preview object
-
-# Save as csv files
-write_csv(cagi_data, "data/processed/cagi_data.csv")
-write_csv(stth_data, "data/processed/stth_data.csv")
-write_csv(agave_data, "data/processed/agave_data.csv")
-
-
-## PSEUDOOPTIMIZATION ##
-
-# Pull out values for points from rasters for only non-collinear covariates
-covs_leye <- extract(x = covs,
-                     y = leye_pts[, c("longitude", "latitude")],
-                     ID = FALSE)
-head(covs_leye) # Preview object
-
-# Bind extracted covariate values to leye lat/long, presence/absence
-leye_data <- bind_cols(covs_leye, leye_pts)
-head(leye_data)
-
-# Create SpatVector object of leye used/available points
-leye_pts_sv <- vect(leye_data,
-      geom = c("longitude", "latitude"),
-      crs = crs(bioclim_covs))
-
-# Create copy of leye_data data frame for storing new values extracted at buffers
-leye_pseudo <- leye_data
-
-# Create vector object of buffer radii (2.5km, 5km, 10km, 25km)
-buffers <- c(2500, 5000, 10000, 25000) 
-
-# Extract mean values for each covariate at different scales of effect and store in leye_pseudo object 
+## Extract mean values for each covariate at different scales of effect and store in sp_pseudo object 
 
 for(i in 1:length(buffers)){
   
@@ -405,94 +218,96 @@ for(i in 1:length(buffers)){
   
   cat("Running buffer size =", buffer_i,"\n")
   
-  pt_buffers <- buffer(leye_pts_sv,
-                           width = buffer_i)
+  pt_buffers <- buffer(sp_pts_sv,
+                       width = buffer_i)
   
-# Extract values for all covariates
-cov_buffer_i <- extract(covs,
-                          pt_buffers,
-                          fun = "mean")
+  # Extract values for all covariates
+  cov_buffer_i <- terra::extract(envs,
+                                 pt_buffers,
+                                 fun = "mean")
   
-# Add buffer size to column names
-names(cov_buffer_i) <- paste0(names(cov_buffer_i), "_", buffer_i)
-
-# Add the columns from cov_buffer_i to leye_pseudo
-leye_pseudo <- cbind(leye_pseudo, cov_buffer_i) 
-
+  # Add buffer size to column names
+  names(cov_buffer_i) <- paste0(names(cov_buffer_i), "_", buffer_i)
+  
+  # Add the columns from cov_buffer_i to sp_pseudo
+  sp_pseudo <- cbind(sp_pseudo, cov_buffer_i) 
+  
 }
 
-# Remove ID columns
-leye_pseudo <- leye_pseudo |> 
-  select(-c(ID_2500, ID_5000, ID_10000, ID_25000)) |> 
-  rename(slope_pt = slope, aspect_pt = aspect, tpi_pt = tpi, dd0_pt = dd0, pptsm_pt = pptsm, pptwt_pt = pptwt, karstdist_pt = karstdist, karstdens_pt = karstdens)
+## Remove ID columns and rename point scale columns to _1000
+sp_pseudo <- sp_pseudo |> 
+  select(-c(ID_2500, ID_5000, ID_10000, ID_25000, ID_50000)) |> 
+  rename(slope_1000 = slope, aspect_1000 = aspect, tpi_1000 = tpi, dd0_1000 = dd0, pptsm_1000 = pptsm, pptwt_1000 = pptwt, karstdist_1000 = karstdist, karstdens_1000 = karstdens)
 
-summary(leye_pseudo) # View summary
+summary(sp_pseudo) # View summary
 
 # Compare and select scales of effect
 
 ## Prepare input variables
-buffers <- c("pt", 2500, 5000, 10000, 25000) # Add point scale to list of buffers
+buffers <- c(1000, 2500, 5000, 10000, 25000, 50000) # Add point scale (1km) to list of buffers
 buffers # Preview object
 
 ## Prepare storage data frame
-col_names <- c("Covariate","Scale","AIC","Delta_AIC","AICw") # Create list of columns
-scales <- as.data.frame(matrix(NA, nrow = length(covs_keep_leye)*length(buffers),
+col_names <- c("covariate","scale","AIC","deltaAIC","AICw") # Create list of columns
+scales <- as.data.frame(matrix(NA, nrow = length(envs_subset) * length(buffers),
                                ncol = length(col_names)))
 colnames(scales) <- col_names # Rename columns
 i.row <- 1
 
 ##  Generate models and AIC values 
-for(i in 1:length(covs_keep_leye)){
-  cov_i <- covs_keep_leye[i]
-  cat("Starting", cov_i, "\n")
-  data_i <- leye_pseudo[, c("pa", "weight", paste0(cov_i,"_", buffers))]
-  cov_cols <- paste0(cov_i, "_", buffers)
+for(i in 1:length(envs_subset)){
+  cov <- envs_subset[i]
+  cat("Starting", cov, "\n")
+  data <- sp_pseudo[, c("pa", "weight", paste0(cov,"_", buffers))]
+  cov_cols <- paste0(cov, "_", buffers)
   
   for(j in cov_cols){
-    tmp_col <- j
-    tmp_data <- data_i[,c("pa", "weight", tmp_col)]
-    tmp_model <- glm(tmp_data[, 1] ~ tmp_data[, 3], weights = tmp_data[, 2], family = binomial)
-    scales$Covariate[i.row] <- cov_i
-    scales$AIC[i.row] <- AIC(tmp_model)
-    scales$Scale[i.row] <- strsplit(j, "_")[[1]][2]
-    cat("Finished scale", strsplit(j, "_")[[1]][2], "\n")
+    temp_col <- j
+    temp_data <- data[,c("pa", "weight", temp_col)]
+    temp_model <- glm(temp_data[, 1] ~ temp_data[, 3], weights = temp_data[, 2], family = binomial)
+    scales$covariate[i.row] <- cov
+    scales$AIC[i.row] <- AIC(temp_model)
+    scales$scale[i.row] <- as.numeric(strsplit(j, "_")[[1]][2])
+    cat("Finished scale", as.numeric(strsplit(j, "_")[[1]][2], "\n"))
     i.row <- i.row + 1
   }
-  min_i <- min(scales$AIC[which(scales$Covariate == cov_i)])
-  delta_i <- scales$AIC[which(scales$Covariate == cov_i)] - min_i
-  w_i <- Weights(scales$AIC[which(scales$Covariate == cov_i)])
-  scales$AICw[which(scales$Covariate == cov_i)] <- w_i
-  scales$Delta_AIC[which(scales$Covariate == cov_i)] <- delta_i
+  min <- min(scales$AIC[which(scales$covariate == cov)])
+  delta <- scales$AIC[which(scales$covariate == cov)] - min
+  w <- Weights(scales$AIC[which(scales$covariate == cov)])
+  scales$AICw[which(scales$covariate == cov)] <- w
+  scales$deltaAIC[which(scales$covariate == cov)] <- delta
   
 }
 
 # Remove distance to karst covariate since it does not need to be pseudooptimized
 scales <- scales |> 
-  filter(!str_detect(Covariate, "karstdist"))
-
+  filter(!str_detect(covariate, "karstdist"))
+scales
 
 scale_plot <- ggplot(data = scales,
-                     aes(x = Scale, y = Delta_AIC)) +
+                     aes(x = scale, y = deltaAIC)) +
   geom_hline(yintercept = 0) +
   geom_line(aes(group = ''), color = "black") +
   geom_point(color = "black")+
-  facet_wrap(~ Covariate)+
+  facet_wrap(~ covariate)+
   theme_bw()
 scale_plot
 
 # Pull out scale of effect for each covariate
-scale_of_effect <- scales |> 
-  group_by(Covariate) |> 
-  slice_min(Delta_AIC)
-scale_of_effect # Preview object
+optimized_scales <- scales |> 
+  group_by(covariate) |> 
+  slice_min(deltaAIC)
+optimized_scales # Preview object
 
-# aspect: pt
-# dd0: 25000
-# karstdens: pt
-# pptsm: 5000
-# pptwt: 5000
-# slope: 5000
-# tpi: pt 
+# Scales of effect
+## aspect: 1000
+## dd0: 25000
+## karstdens: 50000
+## pptsm: 5000
+## pptwt: 5000
+## slope: 5000
+## tpi: 1000
+# Forage: ? 
 
 
 
