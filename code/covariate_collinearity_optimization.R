@@ -12,31 +12,23 @@ library(MuMIn)
 library(spThin)
 
 # Define species
-# sp <- "leye"
-sp <- c("cagi", "stth", "agave")
+#sp <- "leye"
+sp <- c("cagi")
 
 # Read in data
 
 ## Polygons
 az <- vect("data/processed/az_boundary.shp")
-mcp <- vect("data/processed/mcp.shp")
-mcp_buffered <- vect("data/processed/mcp_buffered.shp")
+az_buffered <- vect("data/processed/az_buffered.shp")
+#mcp <- vect("data/processed/mcp.shp")
+#mcp_buffered <- vect("data/processed/mcp_buffered.shp")
 
 for(species in sp){
   
   ## Species occurrence points
-  sp_raw <- read_csv(paste0("data/processed/", sp, "_occ.csv")) # species occurrence points
+  sp_raw <- read_csv(paste0("data/processed/", species, "_occ.csv")) # species occurrence points
   
-  ## Create multi-layer SpatRaster of environmental covariate data
-  envs_paths_all <- c("data/processed/elev_mcp_buffered.tif",
-                      "data/processed/slope_mcp_buffered.tif",
-                      "data/processed/aspect_mcp_buffered.tif",
-                      "data/processed/tri_mcp_buffered.tif",
-                      "data/processed/tpi_mcp_buffered.tif",
-                      "data/processed/karst_density_mcp_buffered.tif",
-                      "data/processed/karst_dist_mcp_buffered.tif", 
-                      "data/processed/bioclim_mcp_buffered.tif")
-  
+  ## Environmental covariate data
   envs_all <- rast(envs_paths_all) # Create SpatRaster object
   names(envs_all) # Check covariate list
   proj <- crs(envs_all) # Store CRS/projection
@@ -45,8 +37,8 @@ for(species in sp){
   ## Plot and check to make sure raster extents look correct
   plot(envs_all)
   plot(envs_all[[1]])
-  plot(mcp, add = TRUE)
-  plot(mcp_buffered, add = TRUE)
+  plot(az, add = TRUE)
+  plot(az_buffered, add = TRUE)
   
   # Prepare data
   
@@ -55,20 +47,20 @@ for(species in sp){
     rename(tri = TRI, tpi = TPI, dd0 = DD_0, eref = Eref, mcmt = MCMT, mwmt = MWMT, pptat = PPT_at, pptsp = PPT_sp, pptsm = PPT_sm, pptwt = PPT_wt, tavesm = Tave_sm, tavewt = Tave_wt, tavesp = Tave_sp, taveat = Tave_at, karstdist = karst_dist_m, karstdens = karst_density)
   plot(envs_all) # Preview object
   
-  ## Create a SpatRaster of covariates masked to study area MCP
-  envs_mcp <- crop(envs_all, mcp, mask = TRUE)
-  plot(envs_mcp[[1]])
-  envs_mcp_buffered <- crop(envs_all, mcp_buffered, mask = TRUE)
-  plot(envs_mcp_buffered[[1]])
-  plot(mcp, add = TRUE)
+  ## Create a SpatRaster of covariates masked to study area
+  envs_az <- crop(envs_all, az, mask = TRUE)
+  plot(envs_az[[1]])
+  envs_az_buffered <- crop(envs_all, az_buffered, mask = TRUE)
+  plot(envs_az_buffered[[1]])
+  plot(az, add = TRUE)
   
   ## Create SpatVector object and reproject occurrence points
   sp_used_sv <-  project(vect(sp_raw,
                               geom = c("longitude", "latitude"),
                               crs = "epsg:4326"), proj) 
-  sp_used_sv <- crop(sp_used_sv, mcp)
+  sp_used_sv <- crop(sp_used_sv, az)
   plot(envs_all[[1]]) # Plot one environmental raster
-  plot(mcp, add = TRUE) # Overlay study area polygon
+  plot(az, add = TRUE) # Overlay study area polygon
   plot(sp_used_sv, add = TRUE, pch = 1, cex = 0.75, col = "black") # Plot used points
   
   ## Convert points to data frame objects
@@ -78,12 +70,13 @@ for(species in sp){
     mutate(species = species) # Create species column for use in thin()  
   head(sp_used) # Preview object
   
-  ## Thin used points to 1 occurrence per 1km grid  cell
+  ## Thin used points to 1 occurrence per 2.5km for leye and 1 occurrence per 1km for forage species
+  if(species == "leye") {
   sp_used_thin <- spThin::thin(sp_used,
                                lat.col = "y",
                                long.col = "x",
                                spec.col = "species",
-                               thin.par = 1, 
+                               thin.par = 2.5, 
                                reps = 1,
                                locs.thinned.list.return = TRUE, 
                                write.files = FALSE, 
@@ -91,28 +84,38 @@ for(species in sp){
     as.data.frame() |> 
     rename("longitude" = "Longitude", "latitude" = "Latitude") |> 
     mutate(pa = 1) |>  # Populate presence/absence column 
-    mutate(weight = 1) 
+    mutate(weight = 1)# Weight used points as 1
+  } else {
+      sp_used_thin <- spThin::thin(sp_used,
+                                   lat.col = "y",
+                                   long.col = "x",
+                                   spec.col = "species",
+                                   thin.par = 1, 
+                                   reps = 1,
+                                   locs.thinned.list.return = TRUE, 
+                                   write.files = FALSE, 
+                                   write.log.file = FALSE) |> 
+        as.data.frame() |> 
+        rename("longitude" = "Longitude", "latitude" = "Latitude") |> 
+        mutate(pa = 1) |>  # Populate presence/absence column 
+        mutate(weight = 1)# Weight used points as 1
+  }
   
   ## Create SpatVector of thinned used points
   sp_used_thin_sv <- vect(sp_used_thin,
                           geom = c("longitude", "latitude"),
                           crs = proj)
   
-  ## Create conditional multiplier object
-  multiplier <- case_when(nrow(sp_used_thin) < 100 ~ 100,
-                          nrow(sp_used_thin) >= 100 & nrow(sp_used_thin) < 20000 ~ 50,
-                          .default = 25)
-  
   ## Set seed for random number generator
   set.seed(1404)
   
   ## Generate available (i.e., background) points
-  system.time(sp_avail_sv <- spatSample(mcp, 
-                                        size = nrow(sp_used_thin) * multiplier,
+  system.time(sp_avail_sv <- spatSample(az, 
+                                        size = 1000,
                                         method = "random"))
   
   plot(envs_all[[1]]) # Plot one environmental raster
-  plot(mcp, add = TRUE) # Overlay study area polygon
+  plot(az, add = TRUE) # Overlay study area polygon
   plot(sp_avail_sv, add = TRUE, pch = 1, cex = 0.75, col = "white") # Add available points
   plot(sp_used_sv, add = TRUE, cex = 0.75, col = "red") # Add thinned used points
   
@@ -121,7 +124,7 @@ for(species in sp){
   sp_avail <- sp_avail |> 
     rename("longitude" = "x", "latitude" = "y") |> 
     mutate(pa = 0) |> 
-    mutate(weight = 1) # weight used points as 1 
+    mutate(weight = 5000) # weight available points as 5000
   head(sp_avail) # Preview object
   
   ## Join used and available points into a single data frame
@@ -137,16 +140,16 @@ for(species in sp){
   
   ## Save output
   write_csv(sp_used_thin, paste0("data/processed/", species, "_used_thin.csv")) 
-  write_csv(sp_avail, paste0("data/processed/", species, "_avail.csv")) 
+  write_csv(sp_avail, paste0("data/processed/", species, "_avail_1000.csv")) 
   write_csv(sp_pts, paste0("data/processed/", species, "_pts.csv")) 
   write_csv(covs_pts, paste0("data/processed/", species, "_covs_pts.csv")) 
 }
 
 # TEST COLLINEARITY #
 
-## VIF (across MCP, threshold = 5, force retention of mean summer and winter precipitation)
-vif_test <- vifstep(envs_mcp, th = 5, keep = c("pptsm", "pptwt"))
-envs <- usdm::exclude(envs_mcp_buffered, vif_test) # Get subset of non-collinear covariates for buffered study area rasters
+## VIF (across AZ, threshold = 5, force retention of mean summer and winter precipitation)
+vif_test <- vifstep(envs_az, th = 5, keep = c("pptsm", "pptwt"))
+envs <- usdm::exclude(envs_az_buffered, vif_test) # Get subset of non-collinear covariates for buffered study area rasters
 plot(envs) # Preview object
 envs_subset <- names(envs) # Check covariate list
 envs_subset
@@ -185,7 +188,7 @@ cor_df # Preview object
 envs_forage <- envs |> 
   select(-karstdist, -karstdens)
 names(envs_forage)
-writeRaster(envs_forage, "envs_forage.tif", overwrite = TRUE)
+writeRaster(envs_forage, "data/processed/envs_forage.tif", overwrite = TRUE)
 
 # PSEUDOOPTIMIZE COVARIATES # 
 # Only for lesser long-nosed bats (i.e., leye)
@@ -301,13 +304,64 @@ optimized_scales # Preview object
 
 # Scales of effect
 ## aspect: 1000
-## dd0: 25000
-## karstdens: 50000
+## dd0: 50000
+## karstdens: 1000
 ## pptsm: 5000
 ## pptwt: 5000
 ## slope: 5000
 ## tpi: 1000
-# Forage: ? 
+# forage: ? 
+
+# Create focal matrices at different scales (5km and 50km)
+buffer_5000 <- focalMat(envs,
+                        d = 5000,
+                        type = c('circle'))
+
+
+buffer_50000 <- focalMat(envs,
+                         d = 50000,
+                         type = c('circle'))
+
+# Smooth pptsm, pptwt, slope rasters to 5km scale
+
+## pptsm
+envs$pptsm_5000 <- focal(envs[["pptsm"]],
+                        w = buffer_5000,
+                        fun = "mean",
+                        na.rm = TRUE)
+## pptwt
+envs$pptwt_5000 <- focal(envs[["pptwt"]],
+                         w = buffer_5000,
+                         fun = "mean",
+                         na.rm = TRUE)
+
+## slope
+envs$slope_5000 <- focal(envs[["slope"]],
+                         w = buffer_5000,
+                         fun = "mean",
+                         na.rm = TRUE)
+
+# Plot to compare original rasters vs smoothed rasters
+plot(c(envs[["pptsm_5000"]], envs[["pptsm"]],
+       envs[["pptwt_5000"]], envs[["pptwt"]],
+       envs[["slope_5000"]], envs[["slope"]]))
+
+# Smooth dd0 raster to 50km scale
+envs$dd0_50000 <- focal(envs[["dd0"]],
+                        w = buffer_50000,
+                        fun = "mean",
+                        na.rm = TRUE)
+
+# Plot to compare original vs smoothed raster
+plot(c(envs[["dd0_50000"]], envs[["dd0"]]))
+
+# WILL NEED TO ADD FORAGE COVARIATES
+
+# Save output
+envs_leye <- envs |> 
+  select(-dd0, -pptsm, -pptwt, -slope)
+names(envs_leye) # Check that correct covariates are included at their scales of effect
+writeRaster(envs_leye, "data/processed/envs_leye.tif", overwrite = TRUE) # Save output
 
 
 
