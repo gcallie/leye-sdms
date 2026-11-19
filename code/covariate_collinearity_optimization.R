@@ -13,7 +13,7 @@ library(spThin)
 
 # Define species
 #sp <- "leye"
-sp <- c("cagi")
+sp <- c("cagi", "stth", "agave")
 
 # Read in data
 
@@ -23,12 +23,23 @@ az_buffered <- vect("data/processed/az_buffered.shp")
 #mcp <- vect("data/processed/mcp.shp")
 #mcp_buffered <- vect("data/processed/mcp_buffered.shp")
 
+
+
 for(species in sp){
   
   ## Species occurrence points
   sp_raw <- read_csv(paste0("data/processed/", species, "_occ.csv")) # species occurrence points
   
-  ## Environmental covariate data
+  ## Create multi-layer SpatRaster of environmental covariate data
+  envs_paths_all <- c("data/processed/elev_mcp_buffered.tif",
+                      "data/processed/slope_mcp_buffered.tif",
+                      "data/processed/aspect_mcp_buffered.tif",
+                      "data/processed/tri_mcp_buffered.tif",
+                      "data/processed/tpi_mcp_buffered.tif",
+                      "data/processed/karst_density_mcp_buffered.tif",
+                      "data/processed/karst_dist_mcp_buffered.tif", 
+                      "data/processed/bioclim_mcp_buffered.tif")
+  
   envs_all <- rast(envs_paths_all) # Create SpatRaster object
   names(envs_all) # Check covariate list
   proj <- crs(envs_all) # Store CRS/projection
@@ -141,8 +152,8 @@ for(species in sp){
   ## Save output
   write_csv(sp_used_thin, paste0("data/processed/", species, "_used_thin.csv")) 
   write_csv(sp_avail, paste0("data/processed/", species, "_avail_1000.csv")) 
-  write_csv(sp_pts, paste0("data/processed/", species, "_pts.csv")) 
-  write_csv(covs_pts, paste0("data/processed/", species, "_covs_pts.csv")) 
+  #write_csv(sp_pts, paste0("data/processed/", species, "_pts.csv")) 
+  #write_csv(covs_pts, paste0("data/processed/", species, "_covs_pts.csv")) 
 }
 
 # TEST COLLINEARITY #
