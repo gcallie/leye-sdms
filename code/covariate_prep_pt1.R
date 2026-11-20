@@ -1,4 +1,4 @@
-# Prepare environmental raster data for collinearity tests and pseudooptimization
+# Prepare environmental raster data for collinearity tests
 
 # Load packages
 library(tidyverse)
