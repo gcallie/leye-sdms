@@ -53,22 +53,6 @@ plot(az_project) # Plot AZ boundary
 plot(az_buffered, add = TRUE) # Overlay AZ buffer
 writeVector(az_buffered, "data/processed/az_buffered.shp", overwrite = TRUE) # Save output
 
-# Create convex hull of LEYE occurrence points
-#leye <- read_csv("data/processed/leye_occ.csv")
-#leye_used <- project(vect(leye,
-                          #geom = c("longitude", "latitude"),
-                          #crs = "epsg:4326"), crs(crs(bioclim_raw))) # Read in leye occurrence points and reproject to Lambert Equal Area
-#mcp <- convHull(leye_used)
-#plot(az_project)
-#plot(mcp, add = TRUE) # Preview object overlaid over AZ boundary
-#writeVector(mcp, "data/processed/mcp.shp", overwrite = TRUE) # Save output
-
-# Create study area extent that is buffered by 75km to ensure pseudooptimization buffers for occurrence points do not fall outside of rasters
-#mcp_buffered <- terra::buffer(mcp, width = 75000)
-#mcp_buffered # Preview extent
-#plot(mcp_buffered, add = TRUE) # Preview result
-#writeVector(mcp_buffered, "data/processed/mcp_buffered.shp", overwrite = TRUE) # Save output
-
 # Crop bioclim rasters to study area
 bioclim_crop <- crop(bioclim_raw, az_buffered)
 bioclim_crop # Preview object
