@@ -33,9 +33,9 @@ az <- vect("data/processed/az_boundary.shp")
 az_buffered <- vect("data/processed/az_buffered.shp")
 
 if(forage == TRUE) {
-  envs <- rast("data/processed/envs_forage.tif")
+  envs <- rast("data/processed/covs4foragesdms.tif")
 } else if (species == "leye") {
-  envs <- rast("data/processed/envs_leye.tif")
+  envs <- rast("data/processed/covs4leyesdms.tif")
 } else {
   warning("Species not defined.")
 }
