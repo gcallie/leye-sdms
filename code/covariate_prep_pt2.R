@@ -1,8 +1,5 @@
 # Prepare used/available points, test environmental raster collinearity, export raster layers for use in forage species SDMs, and pseudooptimize covariates for lesser long-nosed bat SDMs
 
-# Install spThin from CRAN read-only GitHub mirror
-# remotes::install_github("cran/package_name")
-
 # Load packages
 library(tidyterra)
 library(tidyverse)
@@ -13,7 +10,9 @@ library(spThin)
 
 # Define species
 sp <- "leye"
-#sp <- c("cagi", "stth", "agave")
+#sp <- "cagi"
+#sp <- "stth"
+#sp <- "agave"
 
 ### PREPARE USED/AVAILABLE POINTS ###
 
@@ -25,7 +24,7 @@ az_buffered <- vect("data/processed/az_buffered.shp")
   
 ## Species occurrence points
 sp_raw <- read_csv(paste0("data/processed/", sp, "_occ.csv")) # species occurrence points
-  
+
 ## Create multi-layer SpatRaster of environmental covariate data
 envs_paths_all <- c("data/processed/elev_az_buffered.tif",
                       "data/processed/slope_az_buffered.tif",
@@ -72,70 +71,35 @@ plot(sp_used_sv, add = TRUE, pch = 1, cex = 0.75, col = "black") # Plot used poi
   
 ## Convert points to data frame objects
 sp_used <- crds(sp_used_sv)
-sp_used <- as.data.frame(sp_used)
-sp_used <- sp_used |> 
-    mutate(species = sp) # Create species column for use in thin()  
+sp_used <- as.data.frame(sp_used) |> 
+  rename("longitude" = "x", "latitude" = "y") |> 
+           mutate(pa = 1) |>  # Populate presence/absence column 
+           mutate(weight = 1)# Weight used points as 1
 head(sp_used) # Preview object
-  
-## Thin used points to 1 occurrence per 2.5km for leye and 1 occurrence per 1km for forage species
-if(sp == "leye") {
-  sp_used_thin <- spThin::thin(sp_used,
-                               lat.col = "y",
-                               long.col = "x",
-                               spec.col = "species",
-                               thin.par = 2.5, 
-                               reps = 1,
-                               locs.thinned.list.return = TRUE, 
-                               write.files = FALSE, 
-                               write.log.file = FALSE) |> 
-    as.data.frame() |> 
-    rename("longitude" = "Longitude", "latitude" = "Latitude") |> 
-    mutate(pa = 1) |>  # Populate presence/absence column 
-    mutate(weight = 1)# Weight used points as 1
-  } else {
-      sp_used_thin <- spThin::thin(sp_used,
-                                   lat.col = "y",
-                                   long.col = "x",
-                                   spec.col = "species",
-                                   thin.par = 1, 
-                                   reps = 1,
-                                   locs.thinned.list.return = TRUE, 
-                                   write.files = FALSE, 
-                                   write.log.file = FALSE) |> 
-        as.data.frame() |> 
-        rename("longitude" = "Longitude", "latitude" = "Latitude") |> 
-        mutate(pa = 1) |>  # Populate presence/absence column 
-        mutate(weight = 1)# Weight used points as 1
-  }
-  
-## Create SpatVector of thinned used points
-sp_used_thin_sv <- vect(sp_used_thin,
-                          geom = c("longitude", "latitude"),
-                          crs = proj)
   
 ## Set seed for random number generator
 set.seed(1404)
-  
+
 ## Generate available (i.e., background) points
-system.time(sp_avail_sv <- spatSample(az, 
+system.time(sp_avail_sv <- spatSample(az,
                                         size = 100000,
                                         method = "random"))
-  
+
 plot(envs_all[[1]]) # Plot one environmental raster
 plot(az, add = TRUE) # Overlay study area polygon
 plot(sp_avail_sv, add = TRUE, pch = 1, cex = 0.75, col = "white") # Add available points
 plot(sp_used_sv, add = TRUE, cex = 0.75, col = "red") # Add thinned used points
-  
+
 sp_avail <- crds(sp_avail_sv)
 sp_avail <- as.data.frame(sp_avail)
-sp_avail <- sp_avail |> 
-    rename("longitude" = "x", "latitude" = "y") |> 
-    mutate(pa = 0) |> 
+sp_avail <- sp_avail |>
+    rename("longitude" = "x", "latitude" = "y") |>
+    mutate(pa = 0) |>
     mutate(weight = 5000) # weight available points as 5000
 head(sp_avail) # Preview object
   
 ## Join used and available points into a single data frame
-sp_pts <- rbind(sp_used_thin, sp_avail)
+sp_pts <- rbind(sp_used, sp_avail)
 head(sp_pts) # Preview object
 table(sp_pts$pa) # Compare used/available point counts
   
@@ -146,10 +110,9 @@ envs_pts <- terra::extract(x = envs_all,
 head(envs_pts) # Preview object
   
 ## Save output
-write_csv(sp_used_thin, paste0("data/processed/", sp, "_used_thin.csv")) 
+write_csv(sp_used, paste0("data/processed/", sp, "_used.csv")) 
 write_csv(sp_avail, paste0("data/processed/", sp, "_avail.csv")) 
 write_csv(sp_pts, paste0("data/processed/", sp, "_pts.csv")) 
- 
 
 ### TEST ENVIRONMENTAL RASTER COLLINEARITY ###
 

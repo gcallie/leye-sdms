@@ -372,7 +372,7 @@ head(leye_data) # Preview object
 # Recheck collinearity
 
 ## VIF
-vif(covs4leyesdm) # Agave and pptsm_5000 appear to be semi-collinear (VIF ~6.5)
+vif(covs4leyesdm) # Agave and pptsm_5000 appear to be semi-collinear (VIF ~ 6.5)
 
 ## Pairwise (Pearson's correlation)
 cor <- layerCor(covs4leyesdm, fun = "cor") |> 
@@ -408,10 +408,15 @@ cor_df # Preview object
 # Plot final covariate raster stack
 plot(covs4leyesdm)
 names(covs4leyesdm) # Check list of names
+summary(covs4leyesdm) # Note: NA values are the background surrounding AZ
+
+# Z-score standardize covariates
+covs4leyesdm_z <- scale(covs4leyesdm)
+global(covs4leyesdm_z, c("mean", "sd"), na.rm = TRUE) # Verify that means are 0 and SD are 1
+plot(covs4leyesdm_z)
+summary(covs4leyesdm_z)
 
 # Save output
-writeRaster(covs4leyesdm, "data/processed/covs4leyesdm.tif", overwrite = TRUE)
-
-
+writeRaster(covs4leyesdm_z, "data/processed/covs4leyesdm_z.tif", overwrite = TRUE)
 
 

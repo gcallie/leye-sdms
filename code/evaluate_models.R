@@ -8,12 +8,13 @@ library(ecospat)
 library(tidyverse)
 
 # Define species
-sp <- "agave"
+sp <- "leye"
 
 # Read in environmental rasters
-envs <- rast("data/processed/envs_forage.tif")
+envs <- rast("data/processed/covs4leyesdm.tif")
 proj <- crs(envs) # Store projection
 proj
+plot(envs) # Plot to make sure correct covariates appear
 
 # Read in study area polygon
 az <- vect("data/processed/az_boundary.shp")
@@ -26,6 +27,7 @@ mod
 
 # Pull results into a data frame
 results <- eval.results(mod) 
+results |> arrange(delta.AICc)
 
 # Pull the model with the lowest AICc
 opt.aicc <- results |> filter(delta.AICc == 0) 
