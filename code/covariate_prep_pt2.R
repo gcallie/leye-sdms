@@ -80,6 +80,9 @@ head(sp_used) # Preview object
 ## Set seed for random number generator
 set.seed(1404)
 
+## Read in background points (if already generated)
+#sp_avail <- read.csv(paste0("data/processed/", sp, "_avail.csv"))
+
 ## Generate available (i.e., background) points
 system.time(sp_avail_sv <- spatSample(az,
                                         size = 100000,

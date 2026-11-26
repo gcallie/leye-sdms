@@ -81,13 +81,12 @@ head(sp_pseudo)
 buffers <- c(2500, 5000, 10000, 25000, 50000) 
 
 ## Extract mean values for each covariate at different scales of effect and store in sp_pseudo object 
-
-for(i in 1:length(buffers)){
+system.time(for(i in 1:length(buffers)){
   
   buffer_i <- buffers[i]
-  
+  # Print status
   cat("Running buffer size =", buffer_i,"\n")
-  
+  # Generate buffers
   pt_buffers <- buffer(sp_pts_sv,
                        width = buffer_i)
   
@@ -103,13 +102,14 @@ for(i in 1:length(buffers)){
   sp_pseudo <- cbind(sp_pseudo, cov_buffer_i) 
   
 }
+)
 
 head(sp_pseudo) # Preview output
 
 ## Remove ID columns and rename point scale columns to _1000
 sp_pseudo <- sp_pseudo |> 
   select(-c(ID_2500, ID_5000, ID_10000, ID_25000, ID_50000)) |> 
-  rename(slope_1000 = slope, aspect_1000 = aspect, tpi_1000 = tpi, tri_1000 = tri, dd0_1000 = dd0, pptsm_1000 = pptsm, pptwt_1000 = pptwt, karstdist_1000 = karstdist, karstdens_1000 = karstdens, forage_1000 = forage, cagi_1000 = cagi, stth_1000 = stth, agave_1000 = agave)
+  rename(slope_1000 = slope, aspect_1000 = aspect, tpi_1000 = tpi, dd0_1000 = dd0, pptsm_1000 = pptsm, pptwt_1000 = pptwt, karstdist_1000 = karstdist, karstdens_1000 = karstdens, forage_1000 = forage, cagi_1000 = cagi, stth_1000 = stth, agave_1000 = agave)
 
 names(sp_pseudo) # Check that correct covariates/scales were evaluated
 summary(sp_pseudo) # View summary
@@ -187,7 +187,6 @@ optimized_scales # Preview object
 ## slope: 5000
 ## stth: 1000
 ## tpi: 1000
-## tri: 5000
 
 ## Point scale (1km): aspect, karstdens, stth, tpi, karstdist
 
@@ -207,7 +206,7 @@ buffer_50000 <- focalMat(leye_covs,
                          d = 50000,
                          type = c('circle'))
 
-## Smooth pptsm, pptwt, slope, agave, forage, tri rasters to 5km scale
+## Smooth pptsm, pptwt, slope, agave, forage rasters to 5km scale
 
 ### pptsm
 leye_covs$pptsm_5000 <- focal(leye_covs[["pptsm"]],
@@ -238,19 +237,12 @@ leye_covs$forage_5000 <- focal(leye_covs[["forage"]],
                          fun = "mean",
                          na.rm = TRUE)
 
-### tri
-leye_covs$tri_5000 <- focal(leye_covs[["tri"]],
-                               w = buffer_5000,
-                               fun = "mean",
-                               na.rm = TRUE)
-
 ## Plot to compare original rasters vs smoothed rasters
 plot(c(leye_covs[["pptsm_5000"]], leye_covs[["pptsm"]],
        leye_covs[["pptwt_5000"]], leye_covs[["pptwt"]],
        leye_covs[["slope_5000"]], leye_covs[["slope"]],
        leye_covs[["agave_5000"]], leye_covs[["agave"]],
-       leye_covs[["forage_5000"]], leye_covs[["forage"]],
-       leye_covs[["tri_5000"]], leye_covs[["tri"]]))
+       leye_covs[["forage_5000"]], leye_covs[["forage"]]))
 
 ## Smooth cagi raster to 25km scale
 
@@ -276,7 +268,7 @@ plot(c(leye_covs[["dd0_50000"]], leye_covs[["dd0"]]))
 
 # Remove extra covariates at point scales
 covs4leyesdm <- leye_covs |> 
-  select(-pptsm, -pptwt, -slope, -agave, -forage, -tri, -cagi, -dd0)
+  select(-pptsm, -pptwt, -slope, -agave, -forage, -cagi, -dd0)
 names(covs4leyesdm) # Check that correct covariates are included at their scales of effect
 covs4leyesdm # Preview object
 covs4leyesdm <- crop(covs4leyesdm, az, mask = TRUE) # Crop to AZ boundary (formerly were cropped to buffered AZ boundary)
@@ -284,7 +276,7 @@ plot(covs4leyesdm)
 
 # Recheck raster collinearity
 vif(covs4leyesdm)
-vifstep(covs4leyesdm, th = 5, keep = c("stth", "cagi_25000", "agave_5000", "pptsm_5000"))
+vifstep(covs4leyesdm, th = 5, keep = c("pptwt_5000", "pptsm_5000"))
 
 # Compare binomial GLM with individual forage species vs composite forage raster 
 ## Extract point values for covariates at respective scales of effect
@@ -298,13 +290,13 @@ leye_data <- bind_cols(scaled_pts, sp_pts)
 head(leye_data) # Preview object
 
 ## Model with individual rasters for cagi, stth, agave
-indiv_mod <- glm(pa ~ aspect + tpi + karstdens + karstdist + stth + pptsm_5000 + pptwt_5000 + slope_5000 + agave_5000 + tri_5000 + cagi_25000 + dd0_50000, data = leye_data,
+indiv_mod <- glm(pa ~ aspect + tpi + karstdens + karstdist + stth + pptsm_5000 + pptwt_5000 + slope_5000 + agave_5000 + cagi_25000 + dd0_50000, data = leye_data,
                 weight = weight,
                 family = "binomial")
 summary(indiv_mod)
 
 ## Model with composite forage raster
-comp_mod <- glm(pa ~ aspect + tpi + karstdens + karstdist + pptsm_5000 + pptwt_5000 + slope_5000 + tri_5000 + forage_5000 + dd0_50000, data = leye_data,
+comp_mod <- glm(pa ~ aspect + tpi + karstdens + karstdist + pptsm_5000 + pptwt_5000 + slope_5000 + forage_5000 + dd0_50000, data = leye_data,
                  weight = weight,
                  family = "binomial")
 summary(comp_mod)
@@ -318,61 +310,17 @@ aic <-  aic |>
   mutate(dAIC = AIC - min(AIC)) # Calculate delta AIC
 aic # Preview object
 
-### Composite forage raster has a lower delta AIC (~1.87 units lower)
-### However, I think the individual species retains more granularity about bat behavior/habitat selection
+### Composite and individual forage raster have almost the same delta AIC (diff < 2)
 
-### Remove composite forage raster
+### Remove individual forage rasters
 covs4leyesdm <- covs4leyesdm |> 
-  select(-forage_5000)
+  select(-stth, -cagi_25000, -agave_5000)
 names(covs4leyesdm)
-
-# Retest collinearity
-vif(covs4leyesdm) # Slope and tri also appear very collinear
-
-# Compare binomial GLM with tri vs slope
-
-## Model with tri and individual forage rasters (no slope or composite forage)
-tri_mod <- glm(pa ~ aspect + tpi + karstdens + karstdist + stth + pptsm_5000 + pptwt_5000 + agave_5000 + tri_5000 + cagi_25000 + dd0_50000, data = leye_data,
-                 weight = weight,
-                 family = "binomial")
-summary(tri_mod)
-
-## Model with slope and individual forage rasters (no tri or composite forage)
-slope_mod <- glm(pa ~ aspect + tpi + karstdens + karstdist + stth + pptsm_5000 + pptwt_5000 + agave_5000 + slope_5000 + cagi_25000 + dd0_50000, data = leye_data,
-               weight = weight,
-               family = "binomial")
-summary(slope_mod)
-
-## Look at AIC values
-aic <- data.frame(
-  mod = c("tri_mod", "slope_mod"),
-  AIC = c(AIC(tri_mod), AIC(slope_mod)))
-aic <-  aic |> 
-  arrange(AIC) |>  
-  mutate(dAIC = AIC - min(AIC)) # Calculate delta AIC
-aic # Preview object
-
-### Slope mod has a lower delta AIC (~6.48 units lower)
-
-# Remove composite forage raster and tri from leye covariate SpatRaster
-covs4leyesdm <- covs4leyesdm |> 
-  select(-tri_5000)
-  names(covs4leyesdm)
-  
-# Reextract covariate values at points 
-scaled_pts <- terra::extract(x = covs4leyesdm,
-                               y = sp_pts[, c("longitude", "latitude")],
-                               ID = FALSE)
-head(scaled_pts)
-  
-# Add covariate point values to data frame with LEYE lat/long, presence/absence
-leye_data <- bind_cols(scaled_pts, sp_pts)
-head(leye_data) # Preview object
 
 # Recheck collinearity
 
 ## VIF
-vif(covs4leyesdm) # Agave and pptsm_5000 appear to be semi-collinear (VIF ~ 6.5)
+vif(covs4leyesdm)
 
 ## Pairwise (Pearson's correlation)
 cor <- layerCor(covs4leyesdm, fun = "cor") |> 
@@ -403,7 +351,13 @@ cor_df <- cor |>
   arrange(desc(cor))
 cor_df # Preview object
 
-# agave and pptsm (0.833) and karstdens and dd0_50000 (0.770) are correlated at r > 0.7; however, I am going to retain both covariates in the model as all of my VIF values are close to my 5 threshold(max = 5.87; karstdens and dd0 < 4)
+## DD0 is correlated with forage_5000 and karstdens and karstdens is correlated with forage at cor > 0.7
+
+### Remove dd0 but keep forage and karstdens
+covs4leyesdm <- covs4leyesdm |> 
+  select(-dd0_50000)
+names(covs4leyesdm)
+
 
 # Plot final covariate raster stack
 plot(covs4leyesdm)
