@@ -37,7 +37,7 @@ plot(envs) # Plot to make sure correct covariates appear
 az <- vect("data/processed/az_boundary.shp")
 
 # Read in model file
-mod <- loadENMevaluation(paste0("outputs/", sp, "_maxent_mod_v2.rds"))
+mod <- loadENMevaluation(paste0("outputs/", sp, "_maxent_mod.rds"))
 
 # Preview model
 mod
