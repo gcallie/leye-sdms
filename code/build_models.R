@@ -73,8 +73,8 @@ ggsave(paste0("outputs/", sp, "_occ_blocks.pdf"), width = 5, height = 5, dpi = 3
 
 evalplot.grps(pts = bg, pts.grp = block$bg.grp, envs = envs) +
    ggplot2::ggtitle("Spatial block partitions: background")
-ggsave(paste0("outputs/", sp, "_bg_blocks.png"), width = 3, height = 5, dpi = 300) # PNG
-ggsave(paste0("outputs/", sp, "_bg_blocks.pdf"), width = 3, height = 5, dpi = 300) # PDF
+ggsave(paste0("outputs/", sp, "_bg_blocks.png"), width = 5, height = 5, dpi = 300) # PNG
+ggsave(paste0("outputs/", sp, "_bg_blocks.pdf"), width = 5, height = 5, dpi = 300) # PDF
 
 ## Create histogram to compare how the different the environment in each partition is from the others by generating MESS predictions with each partition as the reference
 occs.z <- cbind(occs, terra::extract(envs, occs, ID = FALSE))
