@@ -90,7 +90,8 @@ write_csv(betas, paste0("outputs/", sp, "_betas_", opt.tune.args, ".csv"))
 # Plot response curves
 data <- eval.occs(mod)[, names(envs)]
 evalplot.respCurves(opt.mod, data)
-ggsave(paste0("outputs/", sp, "_response_curves_", opt.tune.args, ".png"), width = 8, height = 7, dpi = 300)
+ggsave(paste0("outputs/", sp, "_response_curves_", opt.tune.args, ".png"), width = 8, height = 7, dpi = 300) # PNG
+ggsave(paste0("outputs/", sp, "_response_curves_", opt.tune.args, ".pdf"), width = 8, height = 7, dpi = 300) # PDF
 
 # Map prediction based on optimal model selected above
 pred.seq <- eval.predictions(mod)[[as.character(opt.tune.args)]]

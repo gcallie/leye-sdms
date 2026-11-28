@@ -68,11 +68,13 @@ table(block$occs.grp) # Preview block sizes
 ## Visualize blocks
 evalplot.grps(pts = occs, pts.grp = block$occs.grp, envs = envs) +
    ggplot2::ggtitle("Spatial block partitions: occurrences")
-ggsave(paste0("outputs/", sp, "_occ_blocks.png"), width = 3, height = 4, dpi = 300)
+ggsave(paste0("outputs/", sp, "_occ_blocks.png"), width = 5, height = 5, dpi = 300) # PNG
+ggsave(paste0("outputs/", sp, "_occ_blocks.pdf"), width = 5, height = 5, dpi = 300) # PDF
 
 evalplot.grps(pts = bg, pts.grp = block$bg.grp, envs = envs) +
    ggplot2::ggtitle("Spatial block partitions: background")
-ggsave(paste0("outputs/", sp, "_bg_blocks.png"), width = 3, height = 4, dpi = 300)
+ggsave(paste0("outputs/", sp, "_bg_blocks.png"), width = 3, height = 5, dpi = 300) # PNG
+ggsave(paste0("outputs/", sp, "_bg_blocks.pdf"), width = 3, height = 5, dpi = 300) # PDF
 
 ## Create histogram to compare how the different the environment in each partition is from the others by generating MESS predictions with each partition as the reference
 occs.z <- cbind(occs, terra::extract(envs, occs, ID = FALSE))
